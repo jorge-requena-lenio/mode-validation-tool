@@ -1,82 +1,123 @@
+from config import config
+from download_queries import (
+    get_query_runs,
+    validate_same_queries,
+    get_query_run_results,
+    get_query_run_by_name,
+    get_report_info,
+)
+from compare_results import compare_results
+from datetime import datetime
+from logger import ReportLogger, QueryLogger
+import os
+import boto3
 import pandas as pd
-import sys
 
-def primary_key_check(redshift_only, snowflake_only, primary_key):
-  mismatch_df = pd.concat([redshift_only, snowflake_only])
-
-  partial_matches = mismatch_df[mismatch_df['loan_id'].isin(redshift_only['loan_id']) & mismatch_df['loan_id'].isin(snowflake_only['loan_id'])]
-  print(len(partial_matches))
-  
-  partial_match_df = mismatch_df[mismatch_df.duplicated(subset=primary_key, keep=False)]
-  print(f'There are {len(partial_match_df)/2} partial matches')
+bucket_name = config["aws"]["bucket_name"]
+aws_access_key_id = config["aws"]["access_key_id"]
+aws_secret_access_key = config["aws"]["secret_access_key"]
 
 
-  not_duplicates_df = mismatch_df[~mismatch_df['loan_id'].isin(partial_match_df['loan_id'])]
-  redshift_no_partial_only_df = not_duplicates_df[not_duplicates_df['_merge'] == 'left_only']
-  snowflake_no_partial_only_df = not_duplicates_df[not_duplicates_df['_merge'] == 'right_only']
+def compare_reports(redshift_report, snowflake_report):
+    try:
+        print(f"Comparing Redshift:{redshift_report} vs Snowflake:{snowflake_report}")
 
-  print(f'There are {len(redshift_no_partial_only_df)} records in redshift only')
-  print(f'There are {len(snowflake_no_partial_only_df)} records in redshift only')
-  print(f'There are {len(partial_match_df)} records in both redshift and snowflake')
+        redshift_report_info = get_report_info(redshift_report)
+        snowflake_report_info = get_report_info(snowflake_report)
 
-  for loan_id in partial_match_df['loan_id'].drop_duplicates():
-    df_redshift = partial_match_df[(partial_match_df['loan_id'] == loan_id) & (partial_match_df['_merge'] == 'left_only')].drop(columns="_merge")
-    df_snowflake = partial_match_df[(partial_match_df['loan_id'] == loan_id) & (partial_match_df['_merge'] == 'right_only')].drop(columns="_merge") 
-    
-    assert len(df_redshift) == 1, f"There should be only 1 row for loan_id {loan_id} in redshift and there are {len(df_redshift)}"
-    assert len(df_snowflake) == 1, f"There should be only 1 row for loan_id {loan_id} in snowflake and there are {len(df_snowflake)}"
+        report_log_folder = (
+            f'logs/{redshift_report_info["name"]}/{datetime.now().isoformat()}'
+        )
+        report_logger = ReportLogger(report_log_folder).get_logger()
 
-    redshift_row = df_redshift.iloc[0, :].fillna('NaN')
-    snowflake_row = df_snowflake.iloc[0, :].fillna('NaN')
+        redshift_run = redshift_report_info["last_successful_run_token"]
+        snowflake_run = snowflake_report_info["last_successful_run_token"]
 
-    differences = redshift_row[redshift_row != snowflake_row]
-    columns_with_differences = differences.index.tolist()
-    
-    print(f'\nloan_id: {loan_id} has diffrerences in {len(columns_with_differences)} columns: {", ".join(columns_with_differences)}')
-    print('\nRedshift: values')
-    print(redshift_row[columns_with_differences])
-    print('\nSnowflake: values')
-    print(snowflake_row[columns_with_differences])
-    sys.exit()
-  
-  output_forlder = 'output/'
-  partial_match_df.to_csv(output_forlder + 'partial_match.csv', index=False)
-  redshift_no_partial_only_df.to_csv(output_forlder + 'redshift_only.csv', index=False)
-  snowflake_no_partial_only_df.to_csv(output_forlder + 'snowflake_only.csv', index=False)
-  
+        report_logger.info(f"Redshift last successful run: {redshift_run}")
+        report_logger.info(f"Snowflake last successful run: {redshift_run}")
 
-def main(redshift_csv_file=None, snowflake_csv_file=None, primary_key=None):
-  assert redshift_csv_file is not None, 'Please provide redshift csv file'
-  assert snowflake_csv_file is not None, 'Please provide snowflake csv file'
+        redshift_query_runs = get_query_runs(redshift_report, redshift_run)
+        snowflake_query_runs = get_query_runs(snowflake_report, snowflake_run)
+        validate_same_queries(
+            redshift_query_runs, snowflake_query_runs, logger=report_logger
+        )
+        query_runs_by_name = get_query_run_by_name(
+            redshift_query_runs, snowflake_query_runs
+        )
 
-  redshift_df = pd.read_csv(filename_redshift, low_memory=False)
-  print(f'Records in redshift: {len(redshift_df)}')
-  print(f'Redshift csv has {len(redshift_df.columns)} columns:\n{", ".join(redshift_df.columns)}\n')
+        for index, items in enumerate(query_runs_by_name.items()):
+            query_name, query_runs = items
 
-  snowflake_df = pd.read_csv(filename_snowflake, low_memory=False)
-  print(f'Records in snowflake: {len(snowflake_df)}')
-  print(f'Snowflake csv has {len(snowflake_df.columns)} columns:\n{", ".join(snowflake_df.columns)}\n')
+            query_logger_file = f"{report_log_folder}/{query_name}.log"
+            query_logger = QueryLogger(query_logger_file).get_logger()
+            query_logger.info(
+                f'Comparing query results ({index+1}/{len(query_runs_by_name.keys())}): "{query_name}"'
+            )
 
-  combined_df = redshift_df.merge(snowflake_df, indicator=True, how='outer')
-  number_of_records_in_both = len(combined_df[combined_df['_merge'] == 'both'])
-  print(f'There are {number_of_records_in_both} exact matches')
+            redshift_query_run = query_runs["redshift"]
+            snowflake_query_run = query_runs["snowflake"]
 
-  redshift_only = combined_df[combined_df['_merge'] == 'left_only']
-  print(f'There are {len(redshift_only)} records in redshift only')
+            redshift_query_run_results = get_query_run_results(
+                redshift_report,
+                redshift_run,
+                redshift_query_run["token"],
+                logger=query_logger,
+            )
+            snowflake_query_run_results = get_query_run_results(
+                snowflake_report,
+                snowflake_run,
+                snowflake_query_run["token"],
+                logger=query_logger,
+            )
+            results = compare_results(
+                redshift_query_run_results,
+                snowflake_query_run_results,
+                logger=query_logger,
+            )
 
-  snowflake_only = combined_df[combined_df['_merge'] == 'right_only']
-  print(f'There are {len(snowflake_only)} records in snowflake only')
+            report_logger.info(f'Query "{query_name}" results')
+            for key, value in results.items():
+                report_logger.info(f"{key}: {value}")
 
-  if (primary_key is not None):
-    primary_key_check(redshift_only, snowflake_only, primary_key)
+            report_logger.info(
+                f'Exact matches: {results["exact_matches"] / results["total_combined"] * 100:.2f}%'
+            )
+            report_logger.info(
+                f'Only redshift: {results["redshift_only"] / results["total_combined"] * 100:.2f}%'
+            )
+            report_logger.info(
+                f'Only snowflake: {results["snowflake_only"] / results["total_combined"] * 100:.2f}%'
+            )
+
+            query_logger.debug(
+                f'|-----*****----->>> Redshift-SQL: <<<-----*****-----|\n{redshift_query_run["raw_source"]}'
+            )
+            query_logger.debug(
+                f'|-----*****----->>> Snowflake-SQL: <<<-----*****-----|\n{snowflake_query_run["raw_source"]}'
+            )
+    except Exception as e:
+        report_logger.error(e)
+
+    push_folder_to_s3(report_log_folder)
 
 
-if __name__ == '__main__':
-  filename_redshift = 'modereport/dropoff_dashboard-1_start_-_pq-df780fa3ea7c-2023-02-01-03-49-45.csv'
-  filename_snowflake = 'modereport/drop_off_dashboard_snowflake-1_start_-_pq-0660239a18b6-2023-01-31-00-06-30_snowflake.csv'
+def push_folder_to_s3(folder: str):
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+    )
+    for filename in os.listdir(folder):
+        file_path = os.path.join(folder, filename)
+        with open(file_path, "rb") as data:
+            s3.upload_fileobj(data, bucket_name, f"{folder}/{filename}")
 
-  if (len(sys.argv) == 3):
-    filename_redshift = sys.argv[1]    
-    filename_snowflake = sys.argv[2]    
 
-  main(filename_redshift, filename_snowflake)
+if __name__ == "__main__":
+    input_df = pd.read_csv("input.csv")
+
+    for index, row in input_df.iterrows():
+        print(f"Report {index+1}/{len(input_df.index)}")
+        redshift_report = row["Redshift links"]
+        snowflake_report = row["Snowflake links"]
+        compare_reports(redshift_report, snowflake_report)
