@@ -37,8 +37,9 @@ def validate_same_queries(redshift_query_runs: list, snowflake_query_runs: list)
   print(f'\nSnowflake queries ({len(snowflake_queries)})')
   print('\n'.join(snowflake_queries))
 
-  if set(redshift_queries) != set(snowflake_queries):
-    raise Exception("Redshift and Snowflake reports don't have the same queries")
+  for snowflake_query in snowflake_queries:
+    if snowflake_query not in redshift_queries:
+      raise Exception(f'Query "{snowflake_query}" not found in Redshift')
   
 
 def get_query_run_token_by_name(redshift_query_runs: list, snowflake_query_runs: list) -> dict:
