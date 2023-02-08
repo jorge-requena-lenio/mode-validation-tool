@@ -42,14 +42,13 @@ def validate_same_queries(redshift_query_runs: list, snowflake_query_runs: list)
       raise Exception(f'Query "{snowflake_query}" not found in Redshift')
   
 
-def get_query_run_token_by_name(redshift_query_runs: list, snowflake_query_runs: list) -> dict:
+def get_query_run_by_name(redshift_query_runs: list, snowflake_query_runs: list) -> dict:
   query_runs_by_name = {}
-  for redshift_query_run in redshift_query_runs:
-    name = redshift_query_run['query_name']
-    snowflake_query_run = next((query_run for query_run in snowflake_query_runs if query_run['query_name'] == name))
-    query_runs_by_name[name] = dict(redshift=redshift_query_run['token'], snowflake=snowflake_query_run['token']) 
+  for snowflake_query_run in snowflake_query_runs:
+    name = snowflake_query_run['query_name']
+    redshift_query_run = next((query_run for query_run in redshift_query_runs if query_run['query_name'] == name))
+    query_runs_by_name[name] = dict(redshift=redshift_query_run, snowflake=snowflake_query_run) 
   return query_runs_by_name
-
 
 def get_query_run_results(report: str, run: str, query_run: str) -> pd.DataFrame:
   url = f'{host}/api/{account}/reports/{report}/runs/{run}/query_runs/{query_run}/results/content.csv'

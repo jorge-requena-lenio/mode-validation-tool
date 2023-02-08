@@ -1,4 +1,4 @@
-from download_queries import get_report_last_successful_run, get_query_runs, validate_same_queries, get_query_run_token_by_name, get_query_run_results
+from download_queries import get_report_last_successful_run, get_query_runs, validate_same_queries, get_query_run_results, get_query_run_by_name
 from compare_results import compare_results
 
 def compare_reports(redshift_report, snowflake_report):
@@ -13,14 +13,19 @@ def compare_reports(redshift_report, snowflake_report):
   redshift_query_runs = get_query_runs(redshift_report, redshift_run)
   snowflake_query_runs = get_query_runs(snowflake_report, snowflake_run)
   validate_same_queries(redshift_query_runs, snowflake_query_runs)
-  query_runs_by_name = get_query_run_token_by_name(redshift_query_runs, snowflake_query_runs)
+  query_runs_by_name = get_query_run_by_name(redshift_query_runs, snowflake_query_runs)
 
-  for query_name, query_run_tokens in query_runs_by_name.items():
-    print(f'\nComparing query "{query_name}" results')
-    redshift_query_run_token = query_run_tokens['redshift']
-    redshift_query_run_results = get_query_run_results(redshift_report, redshift_run, redshift_query_run_token)
-    snowflake_query_run_token = query_run_tokens['snowflake']
-    snowflake_query_run_results = get_query_run_results(snowflake_report, snowflake_run, snowflake_query_run_token)
+  for index, items in enumerate(query_runs_by_name.items()):
+    query_name, query_runs = items 
+    print(f'\nComparing query results ({index+1}/{len(query_runs_by_name.keys())}): "{query_name}"')
+
+    redshift_query_run = query_runs['redshift']
+    snowflake_query_run = query_runs['snowflake']
+    print(f'Redshift SQL:\n{redshift_query_run["raw_source"]}\n')
+    print(f'Snowflake SQL:\n{snowflake_query_run["raw_source"]}\n')
+
+    redshift_query_run_results = get_query_run_results(redshift_report, redshift_run, redshift_query_run['token'])
+    snowflake_query_run_results = get_query_run_results(snowflake_report, snowflake_run, snowflake_query_run['token'])
     compare_results(redshift_query_run_results, snowflake_query_run_results)
 
 
