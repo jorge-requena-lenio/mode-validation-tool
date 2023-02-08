@@ -1,23 +1,23 @@
 import pandas as pd
 import sys
 
-def primary_key_check(redshift_only, snowflake_only, primary_key):
+def primary_key_check(redshift_only, snowflake_only, primary_key, logger):
   mismatch_df = pd.concat([redshift_only, snowflake_only])
 
   partial_matches = mismatch_df[mismatch_df['loan_id'].isin(redshift_only['loan_id']) & mismatch_df['loan_id'].isin(snowflake_only['loan_id'])]
-  print(len(partial_matches))
+  logger.info(len(partial_matches))
   
   partial_match_df = mismatch_df[mismatch_df.duplicated(subset=primary_key, keep=False)]
-  print(f'There are {len(partial_match_df)/2} partial matches')
+  logger.info(f'There are {len(partial_match_df)/2} partial matches')
 
 
   not_duplicates_df = mismatch_df[~mismatch_df['loan_id'].isin(partial_match_df['loan_id'])]
   redshift_no_partial_only_df = not_duplicates_df[not_duplicates_df['_merge'] == 'left_only']
   snowflake_no_partial_only_df = not_duplicates_df[not_duplicates_df['_merge'] == 'right_only']
 
-  print(f'There are {len(redshift_no_partial_only_df)} records in redshift only')
-  print(f'There are {len(snowflake_no_partial_only_df)} records in redshift only')
-  print(f'There are {len(partial_match_df)} records in both redshift and snowflake')
+  logger.info(f'There are {len(redshift_no_partial_only_df)} records in redshift only')
+  logger.info(f'There are {len(snowflake_no_partial_only_df)} records in redshift only')
+  logger.info(f'There are {len(partial_match_df)} records in both redshift and snowflake')
 
   for loan_id in partial_match_df['loan_id'].drop_duplicates():
     df_redshift = partial_match_df[(partial_match_df['loan_id'] == loan_id) & (partial_match_df['_merge'] == 'left_only')].drop(columns="_merge")
@@ -32,11 +32,11 @@ def primary_key_check(redshift_only, snowflake_only, primary_key):
     differences = redshift_row[redshift_row != snowflake_row]
     columns_with_differences = differences.index.tolist()
     
-    print(f'\nloan_id: {loan_id} has diffrerences in {len(columns_with_differences)} columns: {", ".join(columns_with_differences)}')
-    print('\nRedshift: values')
-    print(redshift_row[columns_with_differences])
-    print('\nSnowflake: values')
-    print(snowflake_row[columns_with_differences])
+    logger.info(f'loan_id: {loan_id} has diffrerences in {len(columns_with_differences)} columns: {", ".join(columns_with_differences)}')
+    logger.info('Redshift: values')
+    logger.info(redshift_row[columns_with_differences])
+    logger.info('Snowflake: values')
+    logger.info(snowflake_row[columns_with_differences])
     sys.exit()
   
   output_forlder = 'output/'
@@ -44,25 +44,25 @@ def primary_key_check(redshift_only, snowflake_only, primary_key):
   redshift_no_partial_only_df.to_csv(output_forlder + 'redshift_only.csv', index=False)
   snowflake_no_partial_only_df.to_csv(output_forlder + 'snowflake_only.csv', index=False)
   
-def compare_results(redshift_df, snowflake_df, primary_key=None):
-  print(f'Records in redshift: {len(redshift_df)}')
-  print(f'Redshift csv has {len(redshift_df.columns)} columns:\n{", ".join(redshift_df.columns)}\n')
+def compare_results(redshift_df, snowflake_df, primary_key=None, logger=None):
+  logger.info(f'Records in redshift: {len(redshift_df)}')
+  logger.info(f'Redshift csv has {len(redshift_df.columns)} columns:{", ".join(redshift_df.columns)}')
 
-  print(f'Records in snowflake: {len(snowflake_df)}')
-  print(f'Snowflake csv has {len(snowflake_df.columns)} columns:\n{", ".join(snowflake_df.columns)}\n')
+  logger.info(f'Records in snowflake: {len(snowflake_df)}')
+  logger.info(f'Snowflake csv has {len(snowflake_df.columns)} columns:{", ".join(snowflake_df.columns)}')
 
   combined_df = redshift_df.merge(snowflake_df, indicator=True, how='outer')
   number_of_records_in_both = len(combined_df[combined_df['_merge'] == 'both'])
-  print(f'There are {number_of_records_in_both} exact matches')
+  logger.info(f'There are {number_of_records_in_both} exact matches')
 
   redshift_only = combined_df[combined_df['_merge'] == 'left_only']
-  print(f'There are {len(redshift_only)} records in redshift only')
+  logger.info(f'There are {len(redshift_only)} records in redshift only')
 
   snowflake_only = combined_df[combined_df['_merge'] == 'right_only']
-  print(f'There are {len(snowflake_only)} records in snowflake only')
+  logger.info(f'There are {len(snowflake_only)} records in snowflake only')
 
   if (primary_key is not None):
-    primary_key_check(redshift_only, snowflake_only, primary_key)
+    primary_key_check(redshift_only, snowflake_only, primary_key, logger)
 
 
 if __name__ == '__main__':

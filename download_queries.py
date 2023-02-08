@@ -12,11 +12,10 @@ username = '***'
 password = '***'
 
 
-def get_report_last_successful_run(report: str) -> str:
+def get_report_info(report: str) -> str:
   url = f'{host}/api/{account}/reports/{report}'
   response = requests.get(url, auth=HTTPBasicAuth(username, password))
-  data = response.json()
-  return data['last_successful_run_token']
+  return response.json()
 
 
 def get_query_runs(report: str, run: str) -> list:
@@ -26,16 +25,16 @@ def get_query_runs(report: str, run: str) -> list:
   return data['_embedded']['query_runs']
 
 
-def validate_same_queries(redshift_query_runs: list, snowflake_query_runs: list) -> None:
+def validate_same_queries(redshift_query_runs: list, snowflake_query_runs: list, logger=None) -> None:
   redshift_queries = [query_run['query_name'] for query_run in redshift_query_runs]
   redshift_queries.sort()
   snowflake_queries = [query_run['query_name'] for query_run in snowflake_query_runs]
   snowflake_queries.sort()
 
-  print(f'\nRedshift queries ({len(redshift_queries)})')
-  print('\n'.join(redshift_queries))
-  print(f'\nSnowflake queries ({len(snowflake_queries)})')
-  print('\n'.join(snowflake_queries))
+  logger.info(f'Redshift queries ({len(redshift_queries)})')
+  logger.info('\n'.join(redshift_queries))
+  logger.info(f'Snowflake queries ({len(snowflake_queries)})')
+  logger.info('\n'.join(snowflake_queries))
 
   for snowflake_query in snowflake_queries:
     if snowflake_query not in redshift_queries:
@@ -50,7 +49,9 @@ def get_query_run_by_name(redshift_query_runs: list, snowflake_query_runs: list)
     query_runs_by_name[name] = dict(redshift=redshift_query_run, snowflake=snowflake_query_run) 
   return query_runs_by_name
 
-def get_query_run_results(report: str, run: str, query_run: str) -> pd.DataFrame:
+
+def get_query_run_results(report: str, run: str, query_run: str, logger=None) -> pd.DataFrame:
+  logger.info(f'Downloading query run results for {report}/{run}/{query_run}...')
   url = f'{host}/api/{account}/reports/{report}/runs/{run}/query_runs/{query_run}/results/content.csv'
   basic_auth = b64encode(f'{username}:{password}'.encode('utf-8'))
   return pd.read_csv(
