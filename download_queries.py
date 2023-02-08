@@ -1,16 +1,17 @@
 import requests
 from requests.auth import HTTPBasicAuth
-import json
 import pandas as pd
 from base64 import b64encode
-from compare_results import compare_results
+from dotenv import load_dotenv
+from os import getenv
+
+load_dotenv()  # take environment variables from .env.
 
 host = 'https://app.mode.com'
-account = '***'
+account = getenv('MODE_ACCOUNT')
 
-username = '***'
-password = '***'
-
+username = getenv('MODE_KEY')
+password = getenv('MODE_SECRET')
 
 def get_report_info(report: str) -> str:
   url = f'{host}/api/{account}/reports/{report}'
