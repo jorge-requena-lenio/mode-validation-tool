@@ -1,9 +1,17 @@
 from download_queries import get_query_runs, validate_same_queries, get_query_run_results, get_query_run_by_name, get_report_info
 from compare_results import compare_results
 from datetime import datetime
+import os
+import boto3
+import pandas as pd
 
 from logger import ReportLogger, QueryLogger
 
+bucket_name = os.getenv('BUCKET_NAME')
+aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
+aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+
+print(bucket_name)
 def compare_reports(redshift_report, snowflake_report):
   print(f"Comparing Redshift:{redshift_report} vs Snowflake:{snowflake_report}")
   
@@ -40,10 +48,22 @@ def compare_reports(redshift_report, snowflake_report):
 
     query_logger.debug(f'|-----*****----->>> Redshift-SQL: <<<-----*****-----|\n{redshift_query_run["raw_source"]}')
     query_logger.debug(f'|-----*****----->>> Snowflake-SQL: <<<-----*****-----|\n{snowflake_query_run["raw_source"]}')
+  
+  push_folder_to_s3(report_log_folder)
 
-
+def push_folder_to_s3(folder: str):
+  s3 = boto3.client("s3", aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
+  for filename in os.listdir(folder):
+      file_path = os.path.join(folder, filename)
+      with open(file_path, 'rb') as data:
+          s3.upload_fileobj(data, bucket_name, f'{folder}/{filename}')
+  
 
 if __name__ == '__main__':
-  redshift_report = '8f69df62dbd4'
-  snowflake_report = '676bc3781f0b'
-  compare_reports(redshift_report, snowflake_report)
+  input_df = pd.read_csv('input.csv')
+
+  for index, row in input_df.iterrows():
+    print(f'Report {index+1}/{len(input_df.index)}')
+    redshift_report = row['redshift_report']
+    snowflake_report = row['snowflake_report']
+    compare_reports(redshift_report, snowflake_report)
