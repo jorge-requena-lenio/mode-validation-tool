@@ -1,79 +1,81 @@
 import pandas as pd
-import sys
-
-def primary_key_check(redshift_only, snowflake_only, primary_key, logger):
-  mismatch_df = pd.concat([redshift_only, snowflake_only])
-
-  partial_matches = mismatch_df[mismatch_df['loan_id'].isin(redshift_only['loan_id']) & mismatch_df['loan_id'].isin(snowflake_only['loan_id'])]
-  logger.info(len(partial_matches))
-  
-  partial_match_df = mismatch_df[mismatch_df.duplicated(subset=primary_key, keep=False)]
-  logger.info(f'There are {len(partial_match_df)/2} partial matches')
 
 
-  not_duplicates_df = mismatch_df[~mismatch_df['loan_id'].isin(partial_match_df['loan_id'])]
-  redshift_no_partial_only_df = not_duplicates_df[not_duplicates_df['_merge'] == 'left_only']
-  snowflake_no_partial_only_df = not_duplicates_df[not_duplicates_df['_merge'] == 'right_only']
-
-  logger.info(f'There are {len(redshift_no_partial_only_df)} records in redshift only')
-  logger.info(f'There are {len(snowflake_no_partial_only_df)} records in redshift only')
-  logger.info(f'There are {len(partial_match_df)} records in both redshift and snowflake')
-
-  for loan_id in partial_match_df['loan_id'].drop_duplicates():
-    df_redshift = partial_match_df[(partial_match_df['loan_id'] == loan_id) & (partial_match_df['_merge'] == 'left_only')].drop(columns="_merge")
-    df_snowflake = partial_match_df[(partial_match_df['loan_id'] == loan_id) & (partial_match_df['_merge'] == 'right_only')].drop(columns="_merge") 
-    
-    assert len(df_redshift) == 1, f"There should be only 1 row for loan_id {loan_id} in redshift and there are {len(df_redshift)}"
-    assert len(df_snowflake) == 1, f"There should be only 1 row for loan_id {loan_id} in snowflake and there are {len(df_snowflake)}"
-
-    redshift_row = df_redshift.iloc[0, :].fillna('NaN')
-    snowflake_row = df_snowflake.iloc[0, :].fillna('NaN')
-
-    differences = redshift_row[redshift_row != snowflake_row]
-    columns_with_differences = differences.index.tolist()
-    
-    logger.info(f'loan_id: {loan_id} has diffrerences in {len(columns_with_differences)} columns: {", ".join(columns_with_differences)}')
-    logger.info('Redshift: values')
-    logger.info(redshift_row[columns_with_differences])
-    logger.info('Snowflake: values')
-    logger.info(snowflake_row[columns_with_differences])
-    sys.exit()
-  
-  output_forlder = 'output/'
-  partial_match_df.to_csv(output_forlder + 'partial_match.csv', index=False)
-  redshift_no_partial_only_df.to_csv(output_forlder + 'redshift_only.csv', index=False)
-  snowflake_no_partial_only_df.to_csv(output_forlder + 'snowflake_only.csv', index=False)
-  
-def compare_results(redshift_df, snowflake_df, primary_key=None, logger=None):
-  logger.info(f'Records in redshift: {len(redshift_df)}')
-  logger.info(f'Redshift csv has {len(redshift_df.columns)} columns:{", ".join(redshift_df.columns)}')
-
-  logger.info(f'Records in snowflake: {len(snowflake_df)}')
-  logger.info(f'Snowflake csv has {len(snowflake_df.columns)} columns:{", ".join(snowflake_df.columns)}')
-
-  combined_df = redshift_df.merge(snowflake_df, indicator=True, how='outer')
-  number_of_records_in_both = len(combined_df[combined_df['_merge'] == 'both'])
-  logger.info(f'There are {number_of_records_in_both} exact matches')
-
-  redshift_only = combined_df[combined_df['_merge'] == 'left_only']
-  logger.info(f'There are {len(redshift_only)} records in redshift only')
-
-  snowflake_only = combined_df[combined_df['_merge'] == 'right_only']
-  logger.info(f'There are {len(snowflake_only)} records in snowflake only')
-
-  if (primary_key is not None):
-    primary_key_check(redshift_only, snowflake_only, primary_key, logger)
+format_number = lambda x: f"{x:,.0f}"
 
 
-if __name__ == '__main__':
-  filename_redshift = 'modereport/dropoff_dashboard-1_start_-_pq-df780fa3ea7c-2023-02-01-03-49-45.csv'
-  filename_snowflake = 'modereport/drop_off_dashboard_snowflake-1_start_-_pq-0660239a18b6-2023-01-31-00-06-30_snowflake.csv'
+def compare_results(redshift_df, snowflake_df, logger=None):
+    logger.info(
+        f'Redshift csv has {len(redshift_df.columns)} columns:\n{", ".join(redshift_df.columns)}'
+    )
+    redshift_total = len(redshift_df)
+    redshift_duplicates = int(redshift_df.duplicated().sum())
+    logger.info(f"Redshift csv has {format_number(redshift_total)} records")
+    logger.info(f"Redshift csv has {format_number(redshift_duplicates)} duplicates")
 
-  if (len(sys.argv) == 3):
-    filename_redshift = sys.argv[1]    
-    filename_snowflake = sys.argv[2]    
+    redshift_df = redshift_df.drop_duplicates()
+    redshift_uniques = len(redshift_df)
+    logger.info(f"Redshift csv has {format_number(redshift_uniques)} unique records")
 
-  redshift_df = pd.read_csv(filename_redshift, low_memory=False)
-  snowflake_df = pd.read_csv(filename_snowflake, low_memory=False)
+    logger.info(
+        f'Snowflake csv has {len(snowflake_df.columns)} columns:\n{", ".join(snowflake_df.columns)}'
+    )
+    snowflake_total = len(snowflake_df)
+    snowflake_duplicates = int(snowflake_df.duplicated().sum())
+    logger.info(f"Snowflake csv has {format_number(snowflake_total)} records")
+    logger.info(f"Snowflake csv has {format_number(snowflake_duplicates)} duplicates")
 
-  compare_results(redshift_df, snowflake_df)
+    snowflake_df = snowflake_df.drop_duplicates()
+    snowflake_uniques = len(snowflake_df)
+    logger.info(f"Redshift csv has {format_number(snowflake_uniques)} unique records")
+
+    combined_records = redshift_df.merge(snowflake_df, indicator=True, how="outer")
+
+    total_combined = len(combined_records)
+    exact_matches = len(combined_records[combined_records["_merge"] == "both"])
+    redshift_only = len(combined_records[combined_records["_merge"] == "left_only"])
+    snowflake_only = len(combined_records[combined_records["_merge"] == "right_only"])
+
+    logger.info(
+        f"There are {format_number(total_combined)} combined records (no duplicates)"
+    )
+    logger.info(
+        f"There are {format_number(exact_matches)} exact matches ({exact_matches / total_combined * 100:.2f}%)"
+    )
+    logger.info(
+        f"There are {format_number(redshift_only)} records in redshift only ({redshift_only / total_combined * 100:.2f}%)"
+    )
+    logger.info(
+        f"There are {format_number(snowflake_only)} records in snowflake only ({snowflake_only / total_combined * 100:.2f}%)"
+    )
+
+    return dict(
+        redshift_total=redshift_total,
+        redshift_duplicates=redshift_duplicates,
+        redshift_uniques=redshift_uniques,
+        snowflake_total=snowflake_total,
+        snowflake_duplicates=snowflake_duplicates,
+        snowflake_uniques=snowflake_uniques,
+        total_combined=total_combined,
+        exact_matches=exact_matches,
+        redshift_only=redshift_only,
+        snowflake_only=snowflake_only,
+    )
+
+
+if __name__ == "__main__":
+    filename_redshift = "modereport/redshift-8f69df62dbd4-c9a3a2ba3043-71c9487dce99.csv"
+    filename_snowflake = (
+        "modereport/snowflake-676bc3781f0b-6ceb4e12fe5f-e89c4a47462c.csv"
+    )
+
+    redshift_df = pd.read_csv(filename_redshift, low_memory=False)
+    snowflake_df = pd.read_csv(filename_snowflake, low_memory=False)
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.StreamHandler())
+
+    compare_results(redshift_df, snowflake_df, logger)
